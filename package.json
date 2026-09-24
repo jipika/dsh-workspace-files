@@ -1,0 +1,43 @@
+{
+  "name": "dsh-workspace-files",
+  "version": "0.1.0",
+  "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jipika/dsh-workspace-files.git"
+  },
+  "homepage": "https://github.com/jipika/dsh-workspace-files#readme",
+  "bugs": {
+    "url": "https://github.com/jipika/dsh-workspace-files/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "sidebar",
+    "file-tree",
+    "workspace",
+    "explorer"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "private": true
+}
