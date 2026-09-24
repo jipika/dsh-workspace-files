@@ -1,5 +1,5 @@
 {
-  "name": "dsh-workspace-files",
+  "name": "@jipika/dsh-workspace-files",
   "version": "0.1.0",
   "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree.",
   "license": "MIT",
@@ -39,5 +39,7 @@
     "README.md",
     "LICENSE"
   ],
-  "private": true
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -26,7 +26,7 @@ dsh plugin --profile <profile> add github:jipika/dsh-workspace-files
 # ~/.dsh/profiles/<profile>/cordis.patch.yml
 - insert:
     - id: workspace-files
-      name: dsh-workspace-files
+      name: @jipika/dsh-workspace-files
 ```
 
 `desktop` profile 被 Electron 独占（CLI 子命令会被拒），需手改 `package.json` + `pnpm install`；
