@@ -1,5 +1,9 @@
 # dsh-workspace-files
 
+> **拥有**：左侧边栏工作区行右侧的文件夹图标、以及覆盖在会话列表上的文件树（DOM 层）。
+> **冲突时**：**刻意不注册 `sidebar.workspaces` slot**（官方源码声明该区域归其所有）；DOM 定位只用 `[class*="_projectRow"]` 这类属性子串，不碰 CSS Module hash 前缀。
+> **回滚**：删 `dsh-workspace-files` insert + 重启应用。
+
 > Left-sidebar file switch: hover a workspace row, click the icon, and its session list
 > becomes a lazy file tree.
 >
@@ -8,11 +12,36 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 - 鼠标移到某个**工作区标题行**上 → 行右侧浮出一个**切换图标**
-- 点它 → **该工作区下面的会话列表收起来，换成这个工作区的文件树**
-- 再点一次 → 切回会话列表
+- 点它 → **整个列表区域切换成这个工作区的文件模式**（zcode 同款：会话列表滑出、文件树滑入），不再只是行下方塞一块面板
+- 文件模式**顶部有返回按钮**（←），点击或再点行上的切换图标 → 滑回会话列表
 - 展开的工作区记在 `localStorage["dsh-workspace-files:open"]`，刷新/重启后自动恢复
-- 目录**懒加载**（点开才请求，结果进内存缓存），面板头部有「重新载入」清缓存重取
+- 目录**懒加载**（点开才请求，结果进内存缓存），头部有「重新载入」清缓存重取
 - 点文件 → 拼 `dsh-resource://file/session/<id>/<path>` 交给右侧栏打开
+
+### 文件模式（v0.3.0，参考 zcode WorkspaceSidebar 的双视图设计）
+
+- 覆盖层 `absolute inset-0` 挂在**列表滚动容器的父级**上，与 zcode 的两视图叠放同构；
+  切换用克制的 **crossfade**（160ms 淡入淡出 + 4px 位移，`prefers-reduced-motion` 时无动画）
+  —— 不做整屏大平移：官方滚动容器若自带 transition/裁剪，大位移会被打断出怪动画。
+- 列表隐藏用 `visibility:hidden`（延迟到淡出结束），覆盖层**背景透明** —— 透出的永远是
+  侧边栏原生底色，不猜任何主题 token，暗/亮主题都不会出现色块。
+- 容器定位**不硬编码类名**：从 projectRow 向上找「包含全部行」的共同祖先，再向上找第一个
+  `overflow-y: auto/scroll` 的滚动容器；挂载点运行时补 `position:relative + overflow:hidden`。
+- 会话行不再逐行隐藏（旧做法 `data-wsf-hidden` 已删）—— 整个列表让位即可，对官方 React 重渲染的干扰更小。
+- 列出该工作区文件需要它名下会话的 `cwd`；探测链（sessions store → workspaces store → DOM 挖 id → 当前会话兜底）不变。
+
+### 智能排序（v0.2.0）
+
+同一层级的条目按下面的规则排（目录始终在文件前面）：
+
+1. `序章 / 楔子 / 引子 / 前言…` 开头的排最前；`番外 / 终章 / 尾声 / 后记…` 排最后
+2. `第X章|节|回|卷|话|集|部|篇|幕|场` 且 X 为中文数字（一～九、十、百、千、万、两、〇）或阿拉伯数字 → **按章号数值排**：
+   `第三章 → 第九章 → 第二十一章 → 第三百零五章`，不再按字符码位把「第三十章」插到「第三章」前面
+3. 同章号先比写法（`第3章` < `第03章` < `第三章`），再比章号后的余文；余文恰为 `（上）/（中）/（下）` 等单字时按习惯顺序
+4. 其余普通文件排在章节文件之前，互相之间走 numeric 自然序（`file2` < `file10`）
+
+回归测试：`node /tmp/wsf-sort-test.mjs`（从 `lib/client.js` 截取真实实现跑 16 项断言）；
+文件模式编排：`node /tmp/wsf-overlay-test.mjs`（stub DOM 跑真 client.js，11 项断言：注入/滑出标记/挂载位置/恢复/卸载）。
 
 只动左侧对话栏。
 
