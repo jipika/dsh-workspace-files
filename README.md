@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/icon.svg" width="72" alt="dsh-workspace-files icon">
+</div>
+
 # dsh-workspace-files
 
 > **拥有**：左侧边栏工作区行右侧的文件夹图标、以及覆盖在会话列表上的文件树（DOM 层）。
