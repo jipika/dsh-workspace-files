@@ -1,7 +1,7 @@
 {
   "name": "@jipika/dsh-workspace-files",
   "icon": "./assets/icon.svg",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree.",
   "license": "MIT",
   "repository": {
