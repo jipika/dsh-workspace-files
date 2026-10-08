@@ -4,7 +4,8 @@
 
 # dsh-workspace-files
 
-> **拥有**：左侧边栏工作区行右侧的文件夹图标、以及覆盖在会话列表上的文件树（DOM 层）。
+> **拥有**：左侧边栏工作区行右侧的文件夹图标、覆盖在会话列表上的文件树（DOM 层）、
+> 以及树上的**右键菜单**与其 host 路由（`/dsh-workspace-files/fs`）。
 > **冲突时**：**刻意不注册 `sidebar.workspaces` slot**（官方源码声明该区域归其所有）；DOM 定位只用 `[class*="_projectRow"]` 这类属性子串，不碰 CSS Module hash 前缀。
 > **回滚**：删 `dsh-workspace-files` insert + 重启应用。
 
@@ -56,6 +57,44 @@
 - 连续失败 3 次的目录会在本轮轮询里跳过（坏路径不会每 3 秒打一次网关）；
   `visibilitychange` / 窗口 focus 时立即刷一次。
 
+### 右键菜单（v0.5.0）
+
+树里每一行、以及树的空白处都能右键。菜单是**官方 primitives 的 `Menu`**（门户渲染到 `body`、
+跟随鼠标坐标弹出、子菜单与危险行走官方样式），不是自绘列表 —— 顺带白拿键盘走查与焦点归还。
+
+| 目标 | 菜单项 |
+| --- | --- |
+| 文件行 | 在右侧栏预览 · 用默认应用打开 · **打开方式 ▸**（系统已注册应用，带图标与默认标记）· 在访达中显示 · 在终端中打开（所在目录）· 复制绝对路径 / 相对路径 / 文件名 · 重命名… · 移到废纸篓 |
+| 目录行 | 在访达中打开 · 在终端中打开 · **新建文件… / 新建文件夹…** · 复制绝对路径 / 相对路径 / 名称 · 重命名… · 移到废纸篓 |
+| 空白处 | 在访达中显示工作区 · 在终端中打开 · 新建文件… / 新建文件夹… · 复制工作区绝对路径 / 名称 |
+
+- **访达 / 默认应用 / 打开方式走官方 Remote**：`session.openWorkspacePath`（`{path}` 打开、`{path, action:"reveal"}` 在访达中显示、`{path, application}` 指定应用）+ `session.workspacePathApplications`。树里存的是相对路径，发出去前用会话 cwd 拼成**宿主绝对路径**。
+- **删除 = 移到系统废纸篓**（`~/.Trash`，Finder 里可恢复），同名自动避让成 `name 2.ext`；跨卷时明确报错而不是悄悄退化成正删。
+- **重命名是行内编辑**（Enter 提交 / Esc 取消 / 失焦提交）；编辑态的行会从 `<button>` 换成 `<div>` —— `button` 里嵌 `input` 是非法 HTML，键盘事件会被吞掉。
+- **新建走顶部输入条**（回车创建、Esc 或失焦取消）：不依赖目标目录是否已展开，创建后 force 重列即可见。
+- 写操作完成后**立刻**刷新整棵已展开的树（不等 3 秒轮询），并在树顶闪一条结果提示；**复制被系统拒绝时**，提示条里附一个只读输入框（自动选中），⌘C 就能手动拿走。
+- `Escape` 关闭菜单、点击别处关闭、`prefers-reduced-motion` 下不额外做动效（菜单动画归官方组件）。
+
+#### 删除 / 重命名 / 新建为什么需要 host 半边（v0.5.0 新增）
+
+官方**没有**任何文件写能力，三条都核过源码：`workspaceFiles` 服务自述 “exposes no mutations”；
+client 可见的 Remote 命名空间里没有 fs 写接口；Electron preload 只暴露 browser / keyboard /
+shortcuts / updates，连 `shell.trashItem` 都没有。所以这三类动作由插件**自己的 host 路由**承担：
+
+```
+GET  /dsh-workspace-files/health   → { ok, actions, roots, trash }      （诊断用）
+POST /dsh-workspace-files/fs       → { action, path?, dir?, name? }
+     action = trash | rename | newFile | newDir | openTerminal
+```
+
+三层安全边界（都在离线回归里）：目标必须落在**某个已注册工作区**之下（两侧都做 realpath 归一，
+符号链接不会误判）；根目录 / 主目录 / `~/.Trash` 自身与工作区根目录本身一律拒绝；
+名字必须是纯名字（无分隔符、无 `..`、无 NUL、非空、≤255），且**已存在就拒绝，绝不覆盖**。
+
+> ⚠️ **改 host 半边必须完全重启 DSH 应用**（刷新页面不够 —— client 半边走 stat-poll 热读，
+> host 半边是启动时装配的）。重启后 `curl -s :19387/dsh-workspace-files/health` 返回 ok 即生效；
+> 路由没活时点这些菜单项会明确提示「host 路由还没生效（HTTP 405）—— 要完全重启」。
+
 ### 智能排序（v0.2.0）
 
 同一层级的条目按下面的规则排（目录始终在文件前面）：
@@ -66,9 +105,17 @@
 3. 同章号先比写法（`第3章` < `第03章` < `第三章`），再比章号后的余文；余文恰为 `（上）/（中）/（下）` 等单字时按习惯顺序
 4. 其余普通文件排在章节文件之前，互相之间走 numeric 自然序（`file2` < `file10`）
 
-回归测试：`node tests/client-regression.mjs`（24 项，全离线：结构断言 + 从 `lib/client.js`
-截出 `sameEntries` / `sortEntries` 等**真实实现**真跑一遍）。历史脚本手法（`/tmp/wsf-*.mjs`）
-已并进这个文件，不必再依赖 /tmp。
+回归测试（都离线）：
+
+```bash
+node tests/client-regression.mjs   # 61 项：结构断言 + 截真实现跑排序/路径/菜单
+node tests/host-actions.mjs        # 25 项：host 侧在临时目录里真建/改/移文件 + 拒绝矩阵
+```
+
+`host-actions.mjs` 用的是临时沙盒与**可注入的假 home**（`trashPath(target, home)`），
+不会碰任何真实工作区，也不会往真实废纸篓里丢东西。
+
+历史脚本手法（`/tmp/wsf-*.mjs`）已并进这两个文件，不必再依赖 /tmp。
 
 ### 「侧栏一块深一块浅」不是我干的（2026-10-08 实测结论）
 
@@ -134,6 +181,8 @@ dsh plugin --profile <profile> add github:jipika/dsh-workspace-files
 | 归属关系 | 用 `TreeWalker` 按**文档顺序**推断：遇到下一个 `_projectRow` 之前的所有 `_sessionRow` 都归它。不依赖具体嵌套层级 |
 | 文件数据 | 走官方 Remote：`remote.workspaceFiles.list(sessionId, parent)` → `{ ok, value: { entries: [{name,type}], truncated } }`。`parent` 是**被列目录的绝对路径**（官方 `childPath(parent, name)` 就是 `parent + "/" + name`；传空串会被网关判 `gateway/bad-request`），实际取该会话记录的 `cwd` |
 | 打开文件 | 拼 `dsh-resource://file/session/<id>/<path>` 地址，交给 `ctx.sidebarRight.openResource(...)`（没有该服务时退化为打印地址） |
+| 右键菜单 | 官方 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu`（`portal` + `getAnchorRect` 从鼠标坐标弹出）；访达 / 打开方式走 `remote.session.openWorkspacePath` / `workspacePathApplications` |
+| 写操作 | 插件自己的 host 路由 `POST /dsh-workspace-files/fs`（官方零 fs 写能力，见上文）；host 侧用 `node:fs/promises`，删除走 `~/.Trash` |
 | 目录懒加载 | 点开目录才请求，结果进内存缓存；8 秒超时保护；面板头部的「重新载入」清缓存重取 |
 
 隐藏会话行用**属性标记 + CSS 规则**（`[data-wsf-hidden="1"]{display:none!important}`），不用内联 style
@@ -150,22 +199,28 @@ __dshWorkspaceFiles()
 返回插件当前看到的东西：
 
 ```js
-{ openKey, workspacesSeen, sessionsSeen, projectRows, sessionRows, panels, services, sample, sessionSample }
+{ openKey, lastMenuAction, hostRoute, workspacesSeen, sessionsSeen, projectRows, sessionRows, overlay, services, remote, sample, sessionSample }
 ```
 
 - `projectRows` 为 0 → DOM 选择器没匹配上（官方类名规则变了）
 - `workspacesSeen` 为 0 → `ctx.get("workspaces")` 没取到数据：看返回里的 `services.workspaces` 字段（`"缺失"` 表示服务名变了，否则列出的是取到的成员名）
 - 面板里显示「拿不到该工作区的 session」→ workspace 记录里没有可用的 session id（`sample` 里能看到实际形状）
+- `lastMenuAction` → 最近一次右键菜单动作（`{ id, kind, rel, at }`），右键没反应时先看它是否更新
+- `hostRoute` → 写操作路由地址；配合 `curl -s :19387/dsh-workspace-files/health` 判断 host 半边有没有加载
 
 插件还会在发生变化时写一条 `dsh-workspace-files:diag` 记录，便于回看。
 
 ## 已知限制
 
 - 靠 DOM 挖掘与内部服务形状适配，官方侧边栏结构变化后需要跟改（自诊断函数就是为这个准备的）。
-- 需要 `exports.inject = ["remote.workspaceFiles"]`：cordis 会拦截未声明的服务，
-  缺了它会报 `cannot get property "remote.workspaceFiles" without inject`。
+- 需要 `exports.inject = ["remote.workspaceFiles", "remote.session"]`：cordis 会拦截未声明的服务，
+  少任何一个都会报 `cannot get property "remote.…" without inject`。
 - 会话与工作目录必须成对取自同一条 session 记录 —— 用 A 会话的 id 配 B 会话的路径，
   网关会判 `bad-request`（甚至越权读别的目录），所以 `rootFor()` 里刻意不混用。
+- **删除 / 重命名 / 新建 / 在终端中打开改的是 host 半边**，改完要**完全重启应用**；
+  这些动作同样受「只允许在工作区内」的边界约束（想操作工作区外的文件请走 Finder）。
+- 废纸篓只支持**同卷**（macOS 的系统限制）：目标与 `~/.Trash` 不同卷时直接报错并保持文件原样。
+- 「在终端中打开」目前固定用系统自带的 `Terminal.app`（要换 iTerm/Warp 改 `lib/index.js` 的 `openTerminal`）。
 
 ## License
 

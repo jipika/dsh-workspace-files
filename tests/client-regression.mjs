@@ -11,6 +11,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+// host 半边的纯函数（校验/避让名/边界）：直接 import —— 它没有顶层副作用。
+import { nameProblem, pathProblem, protectedProblem, trashNameFor, withinRoot } from "../lib/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "..", "lib", "client.js"), "utf8");
@@ -47,6 +49,18 @@ check("轮询 tick 由可见性驱动", src.includes("setInterval(") && src.incl
 check("内容未变时不 setState", src.includes("sameEntries(prev, value.entries) ? prev : value.entries"));
 check("「刷新」只清本会话缓存", src.includes("function invalidateSession(sessionId)") && src.includes("invalidateSession(sessionId);"));
 check("刷新后不误清展开态（容忍窗口）", src.includes("OPEN_MISS_GRACE_MS") && src.includes("if (rows.length === 0) return;"));
+check(
+	"解析不出会话根时不锁定渲染（指数退避重试、异常也继续排）",
+	src.includes("const unresolved = resolved.sessionId === null") &&
+		src.includes("function scheduleResolveRetry(key)") &&
+		src.includes("RESOLVE_RETRY_MAX_MS") &&
+		/writeDiag\(\{ resolveRetryError:[\s\S]{0,160}scheduleResolveRetry\(key\)/.test(src)
+);
+check("错误态带「重试」按钮（走 retryResolve）", src.includes("function retryResolve(key)") && src.includes("onRetry: () => retryResolve(key)"));
+check(
+	"解析失败时两处缓存都清（ov.sessionId 与 sessionIdCache，缺一个就把失败钉死）",
+	src.includes("sessionIdCache.delete(key);") && /unresolved[\s\S]{0,700}ov\.sessionId = null;[\s\S]{0,80}sessionIdCache\.delete\(key\);/.test(src)
+);
 check("退出动画播完才拆 DOM", src.includes("SWITCH_ANIM_MS + 20") && src.includes("disposeOverlay(ov)"));
 check("探针默认关闭（PROBE_KEY 开关）", src.includes('probeArmed = window.localStorage.getItem(PROBE_KEY) === "1"'));
 
@@ -121,6 +135,96 @@ check(
 // B3. 中文数字解析（回归用）
 check("parseCnNumber：二十一 = 21", fn.parseCnNumber("二十一") === 21);
 check("parseCnNumber：一百零五 = 105", fn.parseCnNumber("一百零五") === 105);
+
+/* ── C. 右键菜单（v0.5.0）结构断言 ─────────────────────────── */
+check(
+	"挂官方 primitives 的 Menu 组件（且组件缺失时降级不崩）",
+	src.includes('require("@deepseek-ai/dsh-client-ui-primitives")') && src.includes('const Menu = typeof primitives.Menu === "function" ? primitives.Menu : null;')
+);
+check("菜单走 portal（不被侧栏 overflow 裁剪）", src.includes("portal: true") && src.includes("className: MENU_ANCHOR_CLASS"));
+check("菜单锚点 = 鼠标坐标（getAnchorRect）", src.includes("getAnchorRect: () => (menu === null ? null : anchorRectAt(menu.x, menu.y))"));
+check("右键入口同时挂在目录行与文件行", (src.match(/onContextMenu: \(event\) => onMenu\(event,/g) || []).length === 2);
+check("编辑态的行从 button 换成 div（button 里不能嵌 input）", src.includes('? h("div", rowProps, cells)') && src.includes('return editing'));
+check("重命名输入框：Enter 提交 / Escape 取消", src.includes("function renameInput(edit)") && src.includes('if (event.key === "Enter")'));
+check("Enter 与 blur 只提交一次（editActive ref 去重）", src.includes("const editActive = React.useRef(null);") && src.includes("const finishRename = (commit) => {"));
+check("新建按钮用 onMouseDown preventDefault 抢在 blur 卸载前提交", src.includes("onMouseDown: (event) => event.preventDefault()"));
+check("Menu 外壳用 display:contents 摘出 flex 布局", src.includes(".dsh-wsf-menu-anchor{display:contents}"));
+check("写操作走插件自己的 host 路由", src.includes('const FS_ROUTE = "/dsh-workspace-files/fs"') && src.includes("await fetch(FS_ROUTE"));
+check("inject 同时声明 remote.workspaceFiles 与 remote.session", src.includes('exports.inject = ["remote.workspaceFiles", "remote.session"]'));
+check("写操作成功后立刻刷新整棵树（不等 3 秒轮询）", src.includes("const refreshNow = () =>") && src.includes("refreshNow();"));
+check("删除是危险行（danger）", src.includes('{ id: "trash", label: "移到废纸篓", danger: true }'));
+check("空白处右键 = 工作区根菜单（不误触行与按钮）", src.includes("onBlankContextMenu") && src.includes('closest(".dsh-wsf-row")'));
+
+/* ── D. 行为断言：右键菜单与 host 校验 ─────────────────────── */
+const menuRunner = new Function(
+	"scope",
+	`with (scope) {
+		 ${extractFunction(src, "joinPath")}
+		 ${extractFunction(src, "parentPathOf")}
+		 ${extractFunction(src, "anchorRectAt")}
+		 ${extractFunction(src, "openWithSubmenu")}
+		 ${extractFunction(src, "buildMenuItems")}
+		 return { joinPath, parentPathOf, anchorRectAt, openWithSubmenu, buildMenuItems };
+	 }`,
+);
+const wsf = menuRunner({ h: (tag, props, ...kids) => ({ tag, props, kids }) });
+
+check("joinPath：根带尾斜杠不产生双斜杠", wsf.joinPath("/Users/x/我的小说/", "第一卷/第3章.md") === "/Users/x/我的小说/第一卷/第3章.md");
+check("joinPath：空 rel 返回根本身", wsf.joinPath("/Users/x/我的小说", "") === "/Users/x/我的小说");
+check("joinPath：相对根（拿不到 cwd）退化为相对路径", wsf.joinPath("", "a.md") === "a.md");
+check("parentPathOf：取所在目录", wsf.parentPathOf("第一卷/第3章.md") === "第一卷");
+check("parentPathOf：根下的条目 → 空串", wsf.parentPathOf("readme.md") === "" && wsf.parentPathOf("第一卷/") === "");
+
+const fileIds = wsf.buildMenuItems({ kind: "file", rel: "第一卷/第3章.md", name: "第3章.md" }, null).map((e) => e.id);
+check(
+	"文件菜单：预览 / 默认应用 / 打开方式 / 访达 / 终端 / 复制三项 / 重命名 / 删除都在",
+	["preview", "openDefault", "openWith", "reveal", "terminal", "copyAbs", "copyRel", "copyName", "rename", "trash"].every((id) => fileIds.includes(id))
+);
+const dirIds = wsf.buildMenuItems({ kind: "dir", rel: "第一卷", name: "第一卷" }, null).map((e) => e.id);
+check(
+	"目录菜单：有新建两项、无「用默认应用打开」与「打开方式」",
+	dirIds.includes("newFile") && dirIds.includes("newDir") && !dirIds.includes("openDefault") && !dirIds.includes("openWith") && dirIds.includes("copyName")
+);
+const blankIds = wsf.buildMenuItems({ kind: "blank", rel: "", name: "我的小说" }, null).map((e) => e.id);
+check(
+	"空白菜单：能新建，但没有重命名/删除（工作区根不能从这里动）",
+	blankIds.includes("newFile") && blankIds.includes("newDir") && !blankIds.includes("rename") && !blankIds.includes("trash")
+);
+const submenuItem = wsf.buildMenuItems({ kind: "file", rel: "a.md", name: "a.md" }, null).find((e) => e.id === "openWith");
+check("打开方式：子菜单在未加载时是禁用占位（不空着）", Array.isArray(submenuItem.submenu) && submenuItem.submenu[0].disabled === true);
+const appsReady = wsf.openWithSubmenu({ state: "ready", list: [{ id: "typora", name: "Typora", default: true, icon: "data:image/png;base64," }] });
+check("打开方式：拿到列表后为 apps:<id>，并标出默认项", appsReady.length === 1 && appsReady[0].id === "apps:typora" && appsReady[0].label.includes("默认"));
+check(
+	"打开方式：查询失败（空表）也给可读占位",
+	wsf.openWithSubmenu({ state: "ready", list: [] })[0].disabled === true && wsf.openWithSubmenu({ state: "loading", list: [] })[0].label.includes("载入")
+);
+const rect = wsf.anchorRectAt(12, 34);
+check("菜单锚点矩形落在鼠标坐标上（DOMRect 缺失时走对象兜底）", rect.left === 12 && rect.top === 34);
+
+check("名字校验：正常中文文件名通过", nameProblem("第二章 风起.md") === null && nameProblem("（上）") === null);
+check(
+	"名字校验：空 / 路径分隔符 / . / .. / 超长都被拒",
+	["", "a/b", "a\\b", ".", "..", "x".repeat(300)].every((bad) => typeof nameProblem(bad) === "string")
+);
+check(
+	"路径校验：相对路径与 .. 回溯被拒、绝对路径通过",
+	typeof pathProblem("a/b") === "string" && typeof pathProblem("/a/../b") === "string" && pathProblem("/Users/x/我的小说/第3章.md") === null
+);
+check(
+	"保护名单：文件系统根 / 主目录 / 废纸篓自身被拒，普通文件放行",
+	typeof protectedProblem("/", "/Users/x") === "string" &&
+		typeof protectedProblem("/Users/x", "/Users/x") === "string" &&
+		typeof protectedProblem("/Users/x/.Trash", "/Users/x") === "string" &&
+		protectedProblem("/Users/x/Documents/a.md", "/Users/x") === null
+);
+check(
+	"废纸篓避让：空篓用原名，占用则 name 2.ext / name 3.ext（Finder 同款）",
+	trashNameFor("a.txt", new Set()) === "a.txt" &&
+		trashNameFor("a.txt", new Set(["a.txt"])) === "a 2.txt" &&
+		trashNameFor("a.txt", new Set(["a.txt", "a 2.txt"])) === "a 3.txt" &&
+		trashNameFor("第一卷", new Set(["第一卷"])) === "第一卷 2"
+);
+check("工作区边界：同前缀的不同目录不算在内", withinRoot("/a/b", "/a/b/c") === true && withinRoot("/a/b", "/a/b") === true && withinRoot("/a/b", "/a/bc") === false);
 
 /* ── 结果 ─────────────────────────────────────────────────── */
 if (failures.length > 0) {

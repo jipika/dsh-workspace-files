@@ -1,8 +1,8 @@
 {
   "name": "@jipika/dsh-workspace-files",
   "icon": "./assets/icon.svg",
-  "version": "0.4.1",
-  "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree.",
+  "version": "0.5.0",
+  "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree — with a right-click menu (copy path, reveal in Finder, open with, rename, new file/folder, move to Trash).",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -38,6 +38,7 @@
     "lib/index.js",
     "lib/client.js",
     "tests/client-regression.mjs",
+    "tests/host-actions.mjs",
     "README.md",
     "LICENSE"
   ],
