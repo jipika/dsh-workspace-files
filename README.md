@@ -19,20 +19,37 @@
 - 点它 → **整个列表区域切换成这个工作区的文件模式**（zcode 同款：会话列表滑出、文件树滑入），不再只是行下方塞一块面板
 - 文件模式**顶部有返回按钮**（←），点击或再点行上的切换图标 → 滑回会话列表
 - 展开的工作区记在 `localStorage["dsh-workspace-files:open"]`，刷新/重启后自动恢复
-- 目录**懒加载**（点开才请求，结果进内存缓存），头部有「重新载入」清缓存重取
+- 目录**懒加载**（点开才请求）+ **热更新**：文件模式下每 3 秒静默重列「已展开的目录」，
+  新建 / 删除 / 改名最长 3 秒就会出现在树里；标签页不可见时暂停，回到前台立即刷一次；
+  头部「刷新」按钮 = 立刻重取（只清这个会话的缓存，别的会话不受牵连）
 - 点文件 → 拼 `dsh-resource://file/session/<id>/<path>` 交给右侧栏打开
 
-### 文件模式（v0.3.0，参考 zcode WorkspaceSidebar 的双视图设计）
+### 文件模式（v0.3.0 双视图叠放；v0.4.0 热更新 + 视觉打磨）
 
 - 覆盖层 `absolute inset-0` 挂在**列表滚动容器的父级**上，与 zcode 的两视图叠放同构；
-  切换用克制的 **crossfade**（160ms 淡入淡出 + 4px 位移，`prefers-reduced-motion` 时无动画）
-  —— 不做整屏大平移：官方滚动容器若自带 transition/裁剪，大位移会被打断出怪动画。
-- 列表隐藏用 `visibility:hidden`（延迟到淡出结束），覆盖层**背景透明** —— 透出的永远是
+  切换动画 = **180ms 轻推入/轻滑出**（覆盖层从右 10px 推入，被盖住的列表向左滑出；退出反向，
+  动画播完才拆 DOM），`prefers-reduced-motion: reduce` 时全部瞬时。
+- 列表隐藏用 `visibility:hidden`（延迟到动画结束），覆盖层**背景透明** —— 透出的永远是
   侧边栏原生底色，不猜任何主题 token，暗/亮主题都不会出现色块。
 - 容器定位**不硬编码类名**：从 projectRow 向上找「包含全部行」的共同祖先，再向上找第一个
   `overflow-y: auto/scroll` 的滚动容器；挂载点运行时补 `position:relative + overflow:hidden`。
 - 会话行不再逐行隐藏（旧做法 `data-wsf-hidden` 已删）—— 整个列表让位即可，对官方 React 重渲染的干扰更小。
 - 列出该工作区文件需要它名下会话的 `cwd`；探测链（sessions store → workspaces store → DOM 挖 id → 当前会话兜底）不变。
+
+#### 列对齐（v0.4.0，实测口径）
+
+行的三列由 CSS 变量驱动，不再写死层级：`padding-left = calc(6px + var(--wsf-depth) * 20px)`，
+其中 **20px = 图标宽 14 + 列间距 6**，于是第 N 级的 chevron 正好落在第 N-1 级 folder 的那一列。
+**文件行第一列补一个不可见的占位图标**（`.dsh-wsf-ico-empty`）—— 没有它时文件名比目录名左移 20px。
+头部：返回按钮 40px 宽、图标靠左，标题紧随其后 —— 实测**标题左边缘 = 文件名左边缘**（同一条竖线）。
+
+#### 热更新（v0.4.0）
+
+- `listDir(sessionId, path, signal, { force })`：缓存带 1.2s TTL，`force` 绕过缓存；
+  文件模式下 `tick` 每 3 秒 +1，驱动**整棵已展开的树**重新列目录。
+- 内容没实质变化（同名同类型）时不 `setState` —— 不闪、不跳、不丢展开状态与滚动位置。
+- 连续失败 3 次的目录会在本轮轮询里跳过（坏路径不会每 3 秒打一次网关）；
+  `visibilitychange` / 窗口 focus 时立即刷一次。
 
 ### 智能排序（v0.2.0）
 
@@ -44,8 +61,28 @@
 3. 同章号先比写法（`第3章` < `第03章` < `第三章`），再比章号后的余文；余文恰为 `（上）/（中）/（下）` 等单字时按习惯顺序
 4. 其余普通文件排在章节文件之前，互相之间走 numeric 自然序（`file2` < `file10`）
 
-回归测试：`node /tmp/wsf-sort-test.mjs`（从 `lib/client.js` 截取真实实现跑 16 项断言）；
-文件模式编排：`node /tmp/wsf-overlay-test.mjs`（stub DOM 跑真 client.js，11 项断言：注入/滑出标记/挂载位置/恢复/卸载）。
+回归测试：`node tests/client-regression.mjs`（24 项，全离线：结构断言 + 从 `lib/client.js`
+截出 `sameEntries` / `sortEntries` 等**真实实现**真跑一遍）。历史脚本手法（`/tmp/wsf-*.mjs`）
+已并进这个文件，不必再依赖 /tmp。
+
+### 「侧栏一块深一块浅」不是我干的（2026-10-08 实测结论）
+
+侧栏各区域的底色差异来自**官方自己的 macOS 材质**，与任何插件无关：
+
+```css
+/* @deepseek-ai/dsh-client-ui-layout/AppFrame.module.css */
+[data-platform="darwin"] ._sidebarCol {
+  background:
+    linear-gradient(to bottom, #7a9bf01a, #7a9bf000 35%, #8f89b800 68%, #8f89b817),
+    color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-sidebar-fill) 97%, #7a9bf0) 40%, transparent);
+}
+```
+
+40% 不透明的混色 + 上下两段蓝/紫渐变 ⇒ 侧栏「上偏蓝、中近中性、下偏紫」，
+只在 `data-platform="darwin"` 生效（CLI/web 实例看不到，容易误判成插件 bug）。
+把「背景色」调成浅色（例如 `#F8F8F8`）会让这层差色更明显。
+想拉平它：在系统里开「辅助功能 → 显示 → 减少透明度」（官方 `prefers-reduced-transparency`
+分支会把侧栏改成 90% 纯色），或自行覆盖 `[data-platform="darwin"] ._sidebarCol` 的 background。
 
 只动左侧对话栏。
 
@@ -69,7 +106,8 @@ dsh plugin --profile <profile> add github:jipika/dsh-workspace-files
 ```
 
 `desktop` profile 被 Electron 独占（CLI 子命令会被拒），需手改 `package.json` + `pnpm install`；
-**改 `lib/client.js` 后必须重启 host 进程（或应用）**，刷新页面无效。
+**改 `lib/client.js` 后刷新页面即生效**（宿住对 client bundle 做 stat-poll，按内容算 rev）——
+只有「增删 client 半边 / 改 host 半边」才需要重启应用。
 
 **卸载**：删掉那行 insert（或加 `disabled: true`）→ 重启：按钮、面板、隐藏都消失，会话列表恢复原样。
 
