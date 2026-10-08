@@ -38,9 +38,14 @@ check(
 );
 check("减少动效时动画被强制关掉", src.includes("animation:none !important"));
 check("标题 13px / 600（与工作区行同级）", src.includes("font-size:13px;font-weight:600;line-height:18px"));
-check("返回按钮是 22×22 轻量块（不再是 40×24 大灰块）", src.includes("width:22px;height:22px;margin:0 22px 0 0"));
+check("返回按钮是 22×22 轻量块（不再是 40×24 大灰块）", src.includes("width:22px;height:22px;margin:0 2px 0 0"));
 check("返回箭头与 chevron 同几何（墨迹区间都是 x∈[6,10]）", src.includes('ICON_CHEVRON_LEFT = "M10 4.5 6 8.5 10 12.5"'));
-check("头部左偏移 = 名称列（2 + 22 + 22 = 46）", src.includes("min-height:28px;padding:0 8px 0 2px"));
+check(
+	"头部第 2 格 = 工作区文件夹图标（填住目录行的 folder 列，头部因此不再有一段莫名空白）",
+	src.includes('className: "dsh-wsf-head-ico"') &&
+		src.includes(".dsh-wsf-head-ico{flex:none;display:grid;place-items:center;width:14px;height:14px;margin:0 6px 0 0")
+);
+check("头部三格与行结构同构（2 + 22 + 2 + 14 + 6 = 46，标题仍在名字列）", src.includes("min-height:28px;padding:0 8px 0 2px"));
 
 check("listDir 支持 force 绕过缓存", src.includes("async function listDir(sessionId, path, signal, opts)") && src.includes("const force = !!(opts && opts.force);"));
 check("缓存带 TTL", src.includes("DIR_CACHE_TTL_MS") && src.includes("Date.now() - hit.at < DIR_CACHE_TTL_MS"));
