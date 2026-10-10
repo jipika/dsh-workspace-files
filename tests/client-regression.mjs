@@ -46,6 +46,18 @@ check(
 );
 check("标题紧贴返回箭头：2 + 22 + 2 = 26（back 右边距仍是 2px）", src.includes("width:22px;height:22px;margin:0 2px 0 0") && src.includes("min-height:28px;padding:0 8px 0 2px"));
 
+check(
+	"子级状态行（载入中/空目录/已截断/错误）按层级缩进到子项名字列",
+	src.includes(".dsh-wsf-sub-note{padding:2px 10px 2px calc(66px + var(--wsf-depth,0) * 20px)}") &&
+		src.includes("const subNote = (key, className, text)") &&
+		src.includes('style: { "--wsf-depth": depth }')
+);
+check(
+	"错误块不再每个 tick 闪一次（triedThisOpen 只在本次展开的第一次清错误）",
+	src.includes("const triedThisOpen = React.useRef(false)") &&
+		src.includes("triedThisOpen.current = false;") &&
+		!/const isFirst = entries === null \|\| error !== null/.test(src)
+);
 check("listDir 支持 force 绕过缓存", src.includes("async function listDir(sessionId, path, signal, opts)") && src.includes("const force = !!(opts && opts.force);"));
 check("缓存带 TTL", src.includes("DIR_CACHE_TTL_MS") && src.includes("Date.now() - hit.at < DIR_CACHE_TTL_MS"));
 check("失败计数 + 退避上限", src.includes("REFRESH_FAIL_LIMIT") && src.includes("dirFail"));
