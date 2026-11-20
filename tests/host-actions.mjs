@@ -6,10 +6,10 @@
 //
 // 覆盖：新建文件/文件夹、重命名、移到废纸篓（含同名避让）、以及三层安全边界的拒绝矩阵。
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEntry, renameEntry, runAction, trashNameFor, trashPath } from "../lib/index.js";
+import { createEntry, mountPointOf, renameEntry, runAction, trashByCopy, trashNameFor, trashPath, treeStats, volumeTrashFor } from "../lib/index.js";
 
 let pass = 0;
 const failures = [];
@@ -75,6 +75,77 @@ try {
 	check("废纸篓：同名避让成「名字 2.ext」", trashed2.trashed === join(fakeHome, ".Trash", "要删的草稿 2.md") && existsSync(trashed2.trashed));
 	await rejects("废纸篓：目标不存在 → not-found", trashPath(join(workspace, "没这个文件"), fakeHome), "not-found");
 
+	/* ── 跨卷兜底（trashByCopy）：先复制、校验、落位，最后才删原件 ── */
+	const copyTrash = join(sandbox, "home2", ".Trash");
+	await mkdir(copyTrash, { recursive: true });
+	const crossFile = join(workspace, "跨卷文件.md");
+	await writeFile(crossFile, "跨卷内容");
+	const viaCopy = await trashByCopy(crossFile, copyTrash);
+	check("跨卷兜底：原件消失、副本在废纸篓里、via=copy", !existsSync(crossFile) && viaCopy.via === "copy" && existsSync(viaCopy.trashed));
+	check("跨卷兜底：内容原样保留（可恢复）", (await readFile(viaCopy.trashed, "utf8")) === "跨卷内容");
+	check(
+		"跨卷兜底：废纸篓里没留下临时名（.dsh-wsf-trash-*）",
+		(await readdir(copyTrash)).every((name) => !name.startsWith(".dsh-wsf-trash-"))
+	);
+
+	const crossDir = join(workspace, "跨卷目录");
+	await mkdir(join(crossDir, "子目录"), { recursive: true });
+	await writeFile(join(crossDir, "a.md"), "AAA");
+	await writeFile(join(crossDir, "子目录", "b.md"), "BBBB");
+	const beforeStats = await treeStats(crossDir);
+	const viaCopyDir = await trashByCopy(crossDir, copyTrash);
+	check("跨卷兜底：目录树整体搬走（原件消失）", !existsSync(crossDir) && existsSync(viaCopyDir.trashed));
+	check("跨卷兜底：副本条目数/字节数与源逐一相同", JSON.stringify(await treeStats(viaCopyDir.trashed)) === JSON.stringify(beforeStats));
+	check("跨卷兜底：嵌套文件内容在", (await readFile(join(viaCopyDir.trashed, "子目录", "b.md"), "utf8")) === "BBBB");
+
+	const crossAgain = join(workspace, "跨卷文件.md");
+	await writeFile(crossAgain, "第二份");
+	const viaCopy2 = await trashByCopy(crossAgain, copyTrash);
+	check("跨卷兜底：同名避让成「名字 2.ext」", viaCopy2.trashed === join(copyTrash, "跨卷文件 2.md"));
+
+	const keepMe = join(workspace, "必须留下.md");
+	await writeFile(keepMe, "别丢");
+	// 让「废纸篓」是个普通文件：cp 会 ENOTDIR（`cp` 自己会递归建目录，所以不能拿不存在的路径当失败注入）
+	const notADir = join(sandbox, "废纸篓是个文件");
+	await writeFile(notADir, "我不是目录");
+	let copyFailed = false;
+	try {
+		await trashByCopy(keepMe, notADir);
+	} catch {
+		copyFailed = true;
+	}
+	check("跨卷兜底：复制失败 → 报错且原件未改动", copyFailed && existsSync(keepMe) && (await readFile(keepMe, "utf8")) === "别丢");
+
+	/* ── 卷定位 ─────────────────────────────────────────────── */
+	check("卷定位：根目录返回自身", (await mountPointOf("/")) === "/");
+	check("卷定位：系统盘路径归到 /", (await mountPointOf("/tmp")) === "/");
+
+	/* ── 真跨卷（可选）：WSF_TEST_VOLUME=/Volumes/xxx 时才跑 ────
+	   默认跳过 —— 公开仓库里跑测试不该往别人的外部卷写临时目录。 */
+	const otherVolume = process.env.WSF_TEST_VOLUME ?? "";
+	if (otherVolume !== "" && existsSync(otherVolume) && (await stat(otherVolume)).dev !== (await stat(sandbox)).dev) {
+		check("卷定位：外部卷下的路径 → 该卷挂载点", (await mountPointOf(join(otherVolume, "任意子目录"))) === otherVolume);
+		const xtest = await mkdtemp(join(otherVolume, ".wsf-xtest-"));
+		try {
+			const xtarget = join(xtest, "外部卷文件.md");
+			await writeFile(xtarget, "外部卷内容");
+			const x = await trashPath(xtarget, join(sandbox, "home2"), { volumeTrash: false });
+			check("真跨卷：走复制兜底（via=copy）而不是同卷 rename", x.via === "copy" && existsSync(x.trashed));
+			check("真跨卷：原件已消失、副本内容一致", !existsSync(xtarget) && (await readFile(x.trashed, "utf8")) === "外部卷内容");
+			const xdir = join(xtest, "外部卷目录");
+			await mkdir(join(xdir, "内层"), { recursive: true });
+			await writeFile(join(xdir, "内层", "c.md"), "CCC");
+			const x2 = await trashPath(xdir, join(sandbox, "home2"), { volumeTrash: false });
+			check("真跨卷：目录也能搬（嵌套内容在）", !existsSync(xdir) && (await readFile(join(x2.trashed, "内层", "c.md"), "utf8")) === "CCC");
+			check(
+				"真跨卷：该卷的 .Trashes/<uid> 被识别出来（只探测，不写）",
+				(await volumeTrashFor(join(xtest, "x"))) === join(otherVolume, ".Trashes", String(process.getuid()))
+			);
+		} finally {
+			await rm(xtest, { recursive: true, force: true });
+		}
+	}
+
 	/* ── 安全边界（拒绝矩阵）──────────────────────────────── */
 	await rejects("边界：工作区外的目标 → forbidden", runAction(ctx, { action: "trash", path: join(outside, "x.md") }), "forbidden");
 	await rejects("边界：工作区根目录本身 → forbidden", runAction(ctx, { action: "rename", path: workspace, name: "改写工作区" }), "forbidden");
@@ -94,7 +165,7 @@ try {
 	const loose = await runAction(noRegistry, { action: "newFile", dir: workspace, name: "无注册表也能建.md" });
 	check("拿不到 workSpaceRegistry 时放行（服务缺失不卡功能）", existsSync(loose.path));
 
-	check("沙盒里没有留下意外文件", (await readdir(workspace)).every((name) => ["第一卷", "第3章 风起.md", "占位.md", "无注册表也能建.md"].includes(name)));
+	check("沙盒里没有留下意外文件", (await readdir(workspace)).every((name) => ["第一卷", "第3章 风起.md", "占位.md", "无注册表也能建.md", "必须留下.md"].includes(name)));
 } finally {
 	await rm(sandbox, { recursive: true, force: true });
 }

@@ -1,7 +1,7 @@
 {
   "name": "@jipika/dsh-workspace-files",
   "icon": "./assets/icon.svg",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Left-sidebar file switch: hover a workspace row, click the folder icon, and its session list becomes a lazy file tree — with a right-click menu (copy path, reveal in Finder, open with, rename, new file/folder, move to Trash).",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,9 @@
     "client": {
       "platform": "web",
       "immediately": true
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "files": [
@@ -40,7 +43,8 @@
     "tests/client-regression.mjs",
     "tests/host-actions.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "cordis.patch.yml"
   ],
   "publishConfig": {
     "access": "public"

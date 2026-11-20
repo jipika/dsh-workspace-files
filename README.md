@@ -68,7 +68,7 @@
 - 连续失败 3 次的目录会在本轮轮询里跳过（坏路径不会每 3 秒打一次网关）；
   `visibilitychange` / 窗口 focus 时立即刷一次。
 
-### 右键菜单（v0.5.0）
+### 右键菜单（v0.5.0；v0.6.0 玻璃材质对齐全局）
 
 树里每一行、以及树的空白处都能右键。菜单是**官方 primitives 的 `Menu`**（门户渲染到 `body`、
 跟随鼠标坐标弹出、子菜单与危险行走官方样式），不是自绘列表 —— 顺带白拿键盘走查与焦点归还。
@@ -80,7 +80,7 @@
 | 空白处 | 在访达中显示工作区 · 在终端中打开 · 新建文件… / 新建文件夹… · 复制工作区绝对路径 / 名称 |
 
 - **访达 / 默认应用 / 打开方式走官方 Remote**：`session.openWorkspacePath`（`{path}` 打开、`{path, action:"reveal"}` 在访达中显示、`{path, application}` 指定应用）+ `session.workspacePathApplications`。树里存的是相对路径，发出去前用会话 cwd 拼成**宿主绝对路径**。
-- **删除 = 移到系统废纸篓**（`~/.Trash`，Finder 里可恢复），同名自动避让成 `name 2.ext`；跨卷时明确报错而不是悄悄退化成正删。
+- **删除 = 移到废纸篓**（Finder 里可恢复），同名自动避让成 `name 2.ext`。三条路径：① 同卷 `rename` 进 `~/.Trash`；② 跨卷且目标卷有 `.Trashes/<uid>`（macOS 每卷自带）→ `rename` 进**该卷的**废纸篓（仍是同卷，瞬时）；③ 跨卷兜底 → 复制到 `~/.Trash` 的临时名 → 比对条目数/字节数 → 落位 → **最后才删原件**。任何一步失败都保留原件。
 - **重命名是行内编辑**（Enter 提交 / Esc 取消 / 失焦提交）；编辑态的行会从 `<button>` 换成 `<div>` —— `button` 里嵌 `input` 是非法 HTML，键盘事件会被吞掉。
 - **新建走顶部输入条**（回车创建、Esc 或失焦取消）：不依赖目标目录是否已展开，创建后 force 重列即可见。
 - 写操作完成后**立刻**刷新整棵已展开的树（不等 3 秒轮询），并在树顶闪一条结果提示；**复制被系统拒绝时**，提示条里附一个只读输入框（自动选中），⌘C 就能手动拿走。
@@ -193,6 +193,7 @@ dsh plugin --profile <profile> add github:jipika/dsh-workspace-files
 | 文件数据 | 走官方 Remote：`remote.workspaceFiles.list(sessionId, parent)` → `{ ok, value: { entries: [{name,type}], truncated } }`。`parent` 是**被列目录的绝对路径**（官方 `childPath(parent, name)` 就是 `parent + "/" + name`；传空串会被网关判 `gateway/bad-request`），实际取该会话记录的 `cwd` |
 | 打开文件 | 拼 `dsh-resource://file/session/<id>/<path>` 地址，交给 `ctx.sidebarRight.openResource(...)`（没有该服务时退化为打印地址） |
 | 右键菜单 | 官方 `@deepseek-ai/dsh-client-ui-primitives` 的 `Menu`（`portal` + `getAnchorRect` 从鼠标坐标弹出）；访达 / 打开方式走 `remote.session.openWorkspacePath` / `workspacePathApplications` |
+| 菜单材质 | `listClassName: "dsh-wsf-menu"` 拿到门户卡片本体；菜单开着时 `<html data-wsf-menu="1">`，关掉官方在 macOS 下垫的那层不透明白底 `[data-menu-backing]`，再把卡片的 `--dsw-menu-surface-fill` 换成「顶 7% 白高光 → 底 3% 压暗的渐变叠 92% 主题底色」。**注意这是同色系磨砂面板，不是真模糊**：DSH 桌面端是 `vibrancy:"sidebar"` 的透明窗口，Chromium 在这种窗口里采样不到页面内容（官方 ui-theme 注释自述「Chromium needs opaque pixels behind the page content to blur it over native vibrancy」），所以留白底 = 实心白卡、拆白底 = 纯透明，两条都不糊（v0.6.0，两次返工后的定稿） |
 | 写操作 | 插件自己的 host 路由 `POST /dsh-workspace-files/fs`（官方零 fs 写能力，见上文）；host 侧用 `node:fs/promises`，删除走 `~/.Trash` |
 | 目录懒加载 | 点开目录才请求，结果进内存缓存；8 秒超时保护；面板头部的「重新载入」清缓存重取 |
 
@@ -230,7 +231,7 @@ __dshWorkspaceFiles()
   网关会判 `bad-request`（甚至越权读别的目录），所以 `rootFor()` 里刻意不混用。
 - **删除 / 重命名 / 新建 / 在终端中打开改的是 host 半边**，改完要**完全重启应用**；
   这些动作同样受「只允许在工作区内」的边界约束（想操作工作区外的文件请走 Finder）。
-- 废纸篓只支持**同卷**（macOS 的系统限制）：目标与 `~/.Trash` 不同卷时直接报错并保持文件原样。
+- 废纸篓跨卷时优先用**目标卷自己的** `.Trashes/<uid>`（同卷 rename，瞬时）；该卷没有/不可写才退到「复制进 `~/.Trash` → 校验 → 删原件」，超大目录在兜底路径上会明显慢，且需要 `~/.Trash` 所在卷有等量空闲空间。
 - 「在终端中打开」目前固定用系统自带的 `Terminal.app`（要换 iTerm/Warp 改 `lib/index.js` 的 `openTerminal`）。
 
 ## License

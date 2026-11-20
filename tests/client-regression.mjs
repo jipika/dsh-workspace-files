@@ -171,6 +171,24 @@ check("写操作成功后立刻刷新整棵树（不等 3 秒轮询）", src.inc
 check("删除是危险行（danger）", src.includes('{ id: "trash", label: "移到废纸篓", danger: true }'));
 check("空白处右键 = 工作区根菜单（不误触行与按钮）", src.includes("onBlankContextMenu") && src.includes('closest(".dsh-wsf-row")'));
 
+/* ── A2. 右键菜单材质（2026-10-26：真模糊在本机 vibrancy 窗口做不到 → 同色系磨砂面板）── */
+check("菜单卡片拿到稳定类名 listClassName（门户卡片唯一的样式钩子）", src.includes('listClassName: "dsh-wsf-menu"'));
+check(
+	"拆掉 macOS 那层不透明白底（留着它，任何渐变都会被纯白压平）",
+	src.includes('html[data-wsf-menu="1"] [data-menu-backing]{display:none !important}')
+);
+check(
+	"菜单填充 = 顶 7% 白高光 / 底 3% 压暗的渐变叠 92% 主题底色（官方在 MenuSurface 的 `background:` 上消费该 token，允许多层）",
+	src.includes(
+		".dsh-wsf-menu{--dsw-menu-surface-fill:linear-gradient(180deg,color-mix(in srgb,#fff 7%,transparent) 0%,transparent 34%,color-mix(in srgb,#000 3%,transparent) 100%),color-mix(in srgb,var(--dsw-alias-bg-base,#f8f9fa) 92%,transparent)}"
+	)
+);
+check("写清「不依赖 backdrop-filter」的原因（两次返工的结论都落在注释里）", src.includes("Chromium needs opaque pixels behind the page content"));
+check(
+	"菜单开合时挂/撤 <html data-wsf-menu>（关掉立刻复原，不影响官方菜单）",
+	src.includes('root.setAttribute("data-wsf-menu", "1")') && src.includes('root.removeAttribute("data-wsf-menu")')
+);
+
 /* ── D. 行为断言：右键菜单与 host 校验 ─────────────────────── */
 const menuRunner = new Function(
 	"scope",
